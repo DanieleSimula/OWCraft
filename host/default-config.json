@@ -2,6 +2,7 @@
   "enabled": true,
   "settings": {
     "toggleKey": "F6",
+    "startAsSteve": true,
     "minecraftMenuKey": "O",
     "verboseLogging": false,
     "minecraftModeFpsCap": 60,

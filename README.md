@@ -1,5 +1,10 @@
 # OWCraft: Minecraft inside Outer Wilds
 
+> **Fork by Daniele Simula** of [OWCraft by Yaekai](https://github.com/Yaekai/OWCraft). In this fork
+> Outer Wilds stays the host game and you play as Steve by default: every Outer Wilds interaction
+> (characters, campfires, elevators, statues, launch codes, ship tractor beam) works from Minecraft
+> mode. Mod id: `DanieleSimula.OWCraft`. See [CHANGELOG.md](CHANGELOG.md).
+
 Fly your ship to a planet, get out, press **F6**, and you're playing real Minecraft there. Break and
 place blocks, open your inventory, light TNT, and build a house on Timber Hearth. Press **F6** again
 to get back into your spacesuit. The house stays on the planet.

@@ -24,6 +24,8 @@ namespace OWCraft.Player
 		public Key ToggleKey = Key.F6;
 		public Key OpenMenuKey = Key.O;
 		public const ushort HidEscape = 41;
+		// The right click went to an Outer Wilds object: Minecraft doesn't get it until it's released.
+		public bool HoldRight;
 
 		static Dictionary<Key, ushort> BuildMap()
 		{
@@ -109,7 +111,8 @@ namespace OWCraft.Player
 
 			Button(link, 1, mouse.leftButton.isPressed);
 			Button(link, 2, mouse.middleButton.isPressed);
-			Button(link, 3, mouse.rightButton.isPressed);
+			if (HoldRight && !mouse.rightButton.isPressed) HoldRight = false;
+			Button(link, 3, mouse.rightButton.isPressed && !HoldRight);
 			Button(link, 4, mouse.backButton.isPressed);
 			Button(link, 5, mouse.forwardButton.isPressed);
 

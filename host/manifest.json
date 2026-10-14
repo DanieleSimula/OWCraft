@@ -1,9 +1,9 @@
 {
   "filename": "OWCraft.dll",
-  "author": "Yaekai",
+  "author": "DanieleSimula (fork of OWCraft by Yaekai)",
   "name": "OWCraft",
-  "uniqueName": "Yaekai.OWCraft",
-  "version": "0.1.1",
+  "uniqueName": "DanieleSimula.OWCraft",
+  "version": "0.2.0",
   "owmlVersion": "2.16.3",
-  "description": "Play real Minecraft on Outer Wilds planets: land, press F6, build. Needs Minecraft running with SkyCraft's Fabric mod (see README)."
+  "description": "Play real Minecraft on Outer Wilds planets: land, press F6, build. Needs Minecraft running with SkyCraft's Fabric mod (see README). Fork of OWCraft by Yaekai: Outer Wilds interactions work while playing as Steve."
 }

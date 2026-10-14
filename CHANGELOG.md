@@ -4,6 +4,26 @@ All notable changes to OWCraft. Versions are the Outer Wilds mod's (`host/manife
 matching Minecraft jar is listed with each release. [MODLOG.md](MODLOG.md) has the full development
 log, test by test.
 
+## [0.2.0] - 2026-10-14
+Fork by Daniele Simula. Mod id changed to `DanieleSimula.OWCraft` (folder
+`Mods\DanieleSimula.OWCraft`); disable the old `Yaekai.OWCraft` so only one is loaded.
+
+### Added
+- **Outer Wilds interactions from Minecraft mode.** Look at anything you can interact with
+  (characters, campfires, elevators, model rocket, ship, signs, launch codes) and right-click: the
+  game switches to the Outer Wilds character, does the interaction, then goes back to Steve.
+- On-screen prompt in the game's own style, with the right mouse button icon, in the game's language.
+- Statues (memory uplink) and the ship tractor beam work as Steve.
+- Launch codes prompt shows correctly in Minecraft mode.
+- **Start as Steve** (`startAsSteve`, on by default): every loop starts in Minecraft mode.
+- Dying in Minecraft (survival) also kills the Outer Wilds player and ends the loop.
+
+### Fixed
+- Holding Shift in elevators no longer kills the player.
+- The spacesuit body no longer shows in first person after interactions.
+- Tractor beam re-arms after leaving it.
+- HUD and shadows no longer jitter far from the universe origin.
+
 ## [0.1.1] - 2026-10-02
 Minecraft jar: `skycraft-0.1.2+owcraft.5.jar`.
 
@@ -49,5 +69,6 @@ First public release.
   loops and restarts.
 - Mod Manager settings: toggle key, menu key, FPS cap, walking speed, verbose logging.
 
+[0.2.0]: https://github.com/DanieleSimula/OWCraft/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Yaekai/OWCraft/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Yaekai/OWCraft/releases/tag/v0.1.0

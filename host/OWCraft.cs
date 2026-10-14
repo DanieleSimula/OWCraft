@@ -55,6 +55,14 @@ namespace OWCraft
 		long _mcFramesAtStats;
 		int _overlayAtStats;
 		float _statsStartedAt;
+		bool _returnToSteve; // an interaction started as Steve: go back to Minecraft mode when it ends
+		float _freeSince = -1f;
+		bool _returnAfterLoop; // the statue ends the loop: back to Steve after waking up
+		bool _startAsSteve = true; // setting: every loop starts in Minecraft mode
+		float _returnUntil; // keep waiting this long for Minecraft or the ground before giving up
+		readonly GamePrompts _prompts = new GamePrompts();
+		bool _hintUsable; // false: a notice without the right click icon
+		string _hint; // the game's text for the Outer Wilds object under the crosshair, or null
 
 		public static void Log(string message)
 		{
@@ -78,6 +86,7 @@ namespace OWCraft
 			Verbose = config.GetSettingsValue<bool>("verboseLogging");
 			_fpsCap = config.GetSettingsValue<int>("minecraftModeFpsCap");
 			_walkSpeed = config.GetSettingsValue<float>("minecraftWalkSpeed");
+			_startAsSteve = config.GetSettingsValue<bool>("startAsSteve");
 			_sized = false; // apply a new speed
 			_input.ToggleKey = ParseKey(config.GetSettingsValue<string>("toggleKey"), Key.F6);
 			_input.OpenMenuKey = ParseKey(config.GetSettingsValue<string>("minecraftMenuKey"), Key.O);
@@ -89,7 +98,7 @@ namespace OWCraft
 		void Start()
 		{
 			_instance = this;
-			new Harmony("Yaekai.OWCraft").PatchAll(Assembly.GetExecutingAssembly());
+			new Harmony("DanieleSimula.OWCraft").PatchAll(Assembly.GetExecutingAssembly());
 			try
 			{
 				_link = new SharedLink(_mappingName);
@@ -111,6 +120,18 @@ namespace OWCraft
 		void OnSceneLoaded(OWScene from, OWScene to)
 		{
 			if (_driver.Active) _driver.Exit();
+			_returnToSteve = false;
+			_driver.ShowModel(); // a kept-hidden model belonged to the old scene
+			// Steve by default: every loop (and the statue's restart) wakes up in Minecraft mode, once
+			// the game hands over the controls and Minecraft is connected.
+			if ((_startAsSteve || _returnAfterLoop) && to == OWScene.SolarSystem)
+			{
+				_returnToSteve = true;
+				_freeSince = -1f;
+				_returnUntil = Time.unscaledTime + 120f;
+			}
+			_returnAfterLoop = false;
+			OuterWildsInteractor.ResetScene();
 			_inSolarSystem = to == OWScene.SolarSystem;
 			AnchorGrid.Reset();
 			if (!_inSolarSystem) return;
@@ -190,6 +211,42 @@ namespace OWCraft
 			bool paused = OWTime.IsPaused() || OWInput.IsInputMode(InputMode.Menu);
 			var kb = Keyboard.current;
 			if (_inSolarSystem && !paused && kb != null && kb[_input.ToggleKey].wasPressedThisFrame) Toggle();
+			if (_returnToSteve && !_driver.Active && _inSolarSystem && !paused) TryReturnToSteve();
+			// An Outer Wilds object under the crosshair (ship seat, elevator, switch): its text is shown,
+			// and a right click uses it instead of going to Minecraft.
+			SingleInteractionVolume owTarget = null;
+			if (_driver.Active && !paused && !(haveState && mc.Has(Proto.McScreenOpen)))
+			{
+				bool rightClick = Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame;
+				owTarget = OuterWildsInteractor.Find(explain: rightClick);
+				if (owTarget != null && rightClick && OuterWildsInteractor.HasCommand(owTarget)) UseOuterWildsTarget(owTarget);
+			}
+			_hint = owTarget != null && _driver.Active ? OuterWildsInteractor.PromptText(owTarget) : null;
+			_hintUsable = owTarget != null && OuterWildsInteractor.HasCommand(owTarget);
+			// The observatory statue: its sequence needs the game's own character (camera lock, end of loop).
+			if (_driver.Active && !paused)
+			{
+				OuterWildsInteractor.RearmTractorBeam(); // back on once Steve walks away from the ship
+				var statue = OuterWildsInteractor.StatueWaiting();
+				if (statue != null)
+				{
+					ExitMode(keepModelHidden: true);
+					_returnToSteve = true;
+					_freeSince = -1f;
+					_returnUntil = Time.unscaledTime + 3f;
+					_returnAfterLoop = true;
+					OuterWildsInteractor.TriggerStatue(statue);
+				}
+				// The ship's tractor beam lifts the Outer Wilds body only. Inside the ship you stay that
+				// character (seat, ship log, take-off); back on a planet's ground, Steve again.
+				else if (OuterWildsInteractor.InActiveTractorBeam())
+				{
+					ExitMode(keepModelHidden: true);
+					_returnToSteve = true;
+					_freeSince = -1f;
+					_returnUntil = float.MaxValue; // however long the trip; F6 cancels
+				}
+			}
 
 			if (_driver.Active)
 			{
@@ -260,6 +317,7 @@ namespace OWCraft
 			{
 				_partClock.Restart();
 				_collision.Update(_driver.Anchor, _driver.X, _driver.Y, _driver.Z);
+				KeepUniverseCentered();
 				EndPart(1);
 				if (Time.unscaledTime >= _nextStatsAt)
 				{
@@ -269,7 +327,8 @@ namespace OWCraft
 					PlayerDriver.TickAgeMs = 0;
 					PlayerDriver.LateTickFrames = 0;
 					string rates = TakeGuestRates(mc, haveState); // before TakeFrameStats resets the frame count
-					Log(TakeFrameStats() + "; " + rates);
+					Log(TakeFrameStats() + "; " + rates + $"; player up to {_maxDrift:F0} m from the origin, {_recenters} recenters");
+					_maxDrift = 0f;
 				}
 			}
 
@@ -287,10 +346,54 @@ namespace OWCraft
 		{
 			for (int i = 0; i < 64 && _link.TryPopEvent(out var ev); i++)
 			{
+				if (ev.Type == Proto.EvPlayerDied)
+				{
+					OnSteveDied();
+					continue;
+				}
 				if (ev.Type != Proto.EvExplosion) continue;
 				Log($"Minecraft explosion at ({ev.A:F1}, {ev.B:F1}, {ev.C:F1}), radius {ev.D:F1}");
 				if (_inSolarSystem) ExplosionEffects.Spawn(ev.A, ev.B, ev.C, ev.D);
 			}
+		}
+
+		/// <summary>
+		/// Steve died in Minecraft (survival): the Outer Wilds character dies too, and the loop starts
+		/// over as it would. Only while playing as Steve; Minecraft is paused otherwise.
+		/// </summary>
+		void OnSteveDied()
+		{
+			if (!_driver.Active || !_inSolarSystem) return;
+			Log("Minecraft player died: the Outer Wilds character dies too");
+			var deaths = Locator.GetDeathManager();
+			ExitMode(keepModelHidden: true); // the game's own death sequence needs its controls
+			_returnToSteve = false;
+			if (deaths != null) deaths.KillPlayer(DeathType.Default);
+		}
+
+		float _maxDrift;
+		int _recenters;
+
+		/// <summary>
+		/// The game keeps the player at the world origin (CenterOfTheUniverse moves everything else by the
+		/// player's velocity) so positions stay precise. Pinned to the planet by Minecraft mode, the player
+		/// moves with the planet's transform while the universe moves by the reported velocity: tiny
+		/// differences add up, the player drifts from the origin, and far out float precision shakes the
+		/// suit's HUD and the shadows (and costs frames). Past a few hundred metres, ask the game to
+		/// recenter, as it does after a reposition.
+		/// </summary>
+		void KeepUniverseCentered()
+		{
+			var body = Locator.GetPlayerBody();
+			if (body == null) return;
+			float d = body.transform.position.magnitude;
+			_maxDrift = Mathf.Max(_maxDrift, d);
+			if (d < 200f) return;
+			var center = Traverse.Create(typeof(CenterOfTheUniverse)).Field("s_instance").GetValue<CenterOfTheUniverse>();
+			if (center == null) return;
+			Traverse.Create(center).Field("_recenterUniverseNextUpdate").SetValue(true);
+			_recenters++;
+			LogOnce("recenter", $"player {d:F0} m from the origin: recentering the universe (logged once)");
 		}
 
 		void TrackGuest()
@@ -321,18 +424,26 @@ namespace OWCraft
 
 		void Toggle()
 		{
+			_returnToSteve = false; // F6 by hand: the player chose
 			if (_driver.Active)
 			{
 				ExitMode();
 				return;
 			}
+			EnterMode();
+		}
+
+		void EnterMode()
+		{
 			string why = _driver.CanEnter(_link);
 			if (why != null)
 			{
+				_driver.ShowModel(); // F6 during a kept-hidden interaction (e.g. inside the ship): show the body
 				Notify("Can't start Minecraft mode: " + why);
 				return;
 			}
 			_driver.Enter(_collision);
+			OuterWildsInteractor.DropGameFocus();
 			CapFrameRate();
 			// Minecraft opens its pause menu when its window loses focus before the link is up; that
 			// screen (with its blurred backdrop) would cover the whole view. Escape closes it.
@@ -342,6 +453,58 @@ namespace OWCraft
 				_link.PushInput(Proto.InKey, InputForwarder.HidEscape, 0);
 			}
 			Notify($"Minecraft mode ({_input.ToggleKey} to leave)");
+		}
+
+		/// <summary>
+		/// After an interaction started as Steve: back to Minecraft mode once the game lets go of the
+		/// player (normal controls, not attached to a seat, campfire or elevator, not talking) for a moment.
+		/// </summary>
+		void TryReturnToSteve()
+		{
+			bool busy = !OWInput.IsInputMode(InputMode.Character) || PlayerState.IsAttached() || PlayerState.InConversation()
+				|| PlayerState.IsPlayerCameraLockingOn() || OuterWildsInteractor.StatueWaiting() != null
+				|| OuterWildsInteractor.InActiveTractorBeam(); // not back to Steve under the ship, or it lifts you again
+			if (busy)
+			{
+				_freeSince = -1f;
+				return;
+			}
+			if (_freeSince < 0f)
+			{
+				_freeSince = Time.unscaledTime;
+				// A few seconds to land after the interaction (top of the elevator, out of the seat).
+				_returnUntil = Mathf.Max(_returnUntil, Time.unscaledTime + 3f);
+			}
+			if (Time.unscaledTime - _freeSince < 0.5f) return;
+			if (_driver.CanEnter(_link) != null)
+			{
+				// Minecraft still starting, or not on the ground yet: wait a while, then leave it to F6.
+				if (Time.unscaledTime < _returnUntil) return;
+				_returnToSteve = false;
+				_freeSince = -1f;
+				_driver.ShowModel();
+				Notify($"{_input.ToggleKey} to go back to Minecraft mode"); // e.g. still inside the ship
+				return;
+			}
+			_returnToSteve = false;
+			_freeSince = -1f;
+			EnterMode();
+		}
+
+		/// <summary>
+		/// What the crosshair is on in Outer Wilds, used like the game's interact key. Every interaction
+		/// is played by the Outer Wilds character (seat, campfire, elevator, talking need its controls and
+		/// its body), then TryReturnToSteve brings Minecraft mode back when it's over.
+		/// Note: Minecraft blocks aren't Unity colliders, a block in between doesn't stop the ray.
+		/// </summary>
+		void UseOuterWildsTarget(SingleInteractionVolume target)
+		{
+			_input.HoldRight = true;
+			ExitMode(keepModelHidden: true);
+			_returnToSteve = true;
+			_freeSince = -1f;
+			_returnUntil = Time.unscaledTime + 3f;
+			OuterWildsInteractor.Press(target);
 		}
 
 		/// <summary>F7, twice: removes every Minecraft block around you (with /fill, so cheats must be on).</summary>
@@ -386,12 +549,12 @@ namespace OWCraft
 			_capped = false;
 		}
 
-		void ExitMode()
+		void ExitMode(bool keepModelHidden = false)
 		{
 			UncapFrameRate();
 			_commands.Cancel();
 			_input.ReleaseAll(_link);
-			_driver.Exit();
+			_driver.Exit(keepModelHidden);
 			_overlay.Visible = false;
 		}
 
@@ -413,6 +576,15 @@ namespace OWCraft
 				EndPart(3);
 			}
 			_overlay.Draw();
+		}
+
+		public static bool MinecraftMode => _instance != null && _instance._driver.Active;
+
+		void LateUpdate()
+		{
+			if (_link == null) return;
+			if (_driver.ModelHidden) _driver.HideNewParts(); // the suit swaps the body model
+			_prompts.Show(_driver.Active ? _hint : null, _hintUsable);
 		}
 
 		void OnDestroy()

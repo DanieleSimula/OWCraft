@@ -155,7 +155,7 @@ namespace OWCraft.Player
 			var cam = Locator.GetPlayerCameraController();
 			if (cam != null) Traverse.Create(cam).Field("_degreesX").SetValue(0f);
 			// Minecraft draws the body now (Steve, in third person): the Hearthian's model goes.
-			_hiddenModel.Clear();
+			// The list may still hold the model kept hidden through an interaction (Exit(keepModelHidden)).
 			var camT = lookCam != null ? lookCam.transform : null;
 			foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>())
 			{
@@ -172,7 +172,11 @@ namespace OWCraft.Player
 			OWCraft.Log($"Minecraft mode on: {Anchor}, feet ({X:F1}, {Y:F1}, {Z:F1}), feet offset {_feetOffset:F2} m, the game's own eye height {naturalEye:F2} m");
 		}
 
-		public void Exit()
+		/// <summary>
+		/// keepModelHidden: an interaction started as Steve is played by the Outer Wilds body, but the
+		/// player shouldn't see the Hearthian (looking down in the elevator); ShowModel brings it back.
+		/// </summary>
+		public void Exit(bool keepModelHidden = false)
 		{
 			if (!Active) return;
 			Active = false;
@@ -186,11 +190,7 @@ namespace OWCraft.Player
 				if (c != null) c.enabled = true;
 			}
 			_solidColliders.Clear();
-			foreach (var r in _hiddenModel)
-			{
-				if (r != null) r.enabled = true;
-			}
-			_hiddenModel.Clear();
+			if (!keepModelHidden) ShowModel();
 			if (_camT != null) _camT.localPosition = _camLocal;
 			_camT = null;
 			ThirdPerson = false;
@@ -210,6 +210,37 @@ namespace OWCraft.Player
 			}
 			if (OWInput.IsInputMode(InputMode.None)) OWInput.ChangeInputMode(_previousInputMode == InputMode.None ? InputMode.Character : _previousInputMode);
 			OWCraft.Log("Minecraft mode off");
+		}
+
+		public bool ModelHidden => _hiddenModel.Count > 0;
+
+		/// <summary>
+		/// Every frame while the model is hidden: parts that turned on since (putting on the suit swaps
+		/// in the suited model, which was inactive when we hid the body) go too. Not what's under the
+		/// camera (first-person arms and tools).
+		/// </summary>
+		public void HideNewParts()
+		{
+			var body = Locator.GetPlayerBody();
+			var cam = Locator.GetPlayerCamera();
+			if (body == null) return;
+			var camT = cam != null ? cam.transform : null;
+			foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>())
+			{
+				if (!r.enabled || (camT != null && r.transform.IsChildOf(camT))) continue;
+				r.enabled = false;
+				_hiddenModel.Add(r);
+			}
+		}
+
+		/// <summary>The Hearthian's model back on (after Exit(keepModelHidden: true)).</summary>
+		public void ShowModel()
+		{
+			foreach (var r in _hiddenModel)
+			{
+				if (r != null) r.enabled = true;
+			}
+			_hiddenModel.Clear();
 		}
 
 		/// <summary>
@@ -426,7 +457,18 @@ namespace OWCraft.Player
 				// The camera exactly at Minecraft's eye, so what you aim at is what Minecraft hits.
 				float eye = _eye;
 				Vector3 eyeWorld = Anchor.McToWorld(fx, fy + eye, fz);
-				player.position += eyeWorld - cam.transform.position;
+				Vector3 delta = eyeWorld - cam.transform.position;
+				if (cam.transform == _camT)
+				{
+					// Up and down goes to the camera, not the body: sneaking lowers Minecraft's eye ~0.4 m,
+					// and a body pushed that far into the floor met kill volumes under it (the launch
+					// elevator's, killing the player on shift). The body stays standing on the feet.
+					Vector3 up = rot * Vector3.up;
+					Vector3 vertical = up * Vector3.Dot(delta, up);
+					player.position += delta - vertical;
+					_camT.position += vertical;
+				}
+				else player.position += delta;
 				McLookFrom(cam.transform.forward);
 				ThirdPerson = mc.CameraMode != 0 && cam.transform == _camT;
 				if (ThirdPerson) PlaceThirdPerson(cam.transform, eyeWorld, mc.CameraMode == 2, mc.CameraDistance > 0f ? mc.CameraDistance : 4f);
