@@ -22,6 +22,64 @@ namespace OWCraft.Player
 		bool _inAir;
 
 		public bool Active { get; private set; }
+
+		// Fork, "Outer Wilds physics" setting: Steve moves with the Outer Wilds body itself (its gravity,
+		// its collisions with planets, ship, elevators, islands, the ground body under its feet) and
+		// Minecraft follows where it is. Off: Minecraft simulates the player, as in OWCraft.
+		public bool UseOwPhysics; // the setting, applied on the next Enter
+		public bool Driven { get; private set; } // this session of Minecraft mode uses it
+		public static bool DrivenNow; // read by the input patches
+		public static float WalkSpeed = 6f; // m/s, the walking speed setting
+		// Steve's width: the body's capsule and the game's anti-sinking sphere under it, both 0.6 m
+		// across while Steve drives (the sphere, wider, rode on stair edges and pushed the body back).
+		CapsuleCollider _capsule;
+		SphereCollider _sinkSphere;
+		float _savedRadius, _savedSinkRadius;
+		const float SteveHalfWidth = 0.3f;
+		public static float BodyRadius = 0.3f; // world metres, for the grounding patch
+		static PlayerDriver Instance2; // the driver, for the jump diagnostics
+		// Minecraft's movement rules on top of the controller (point 5), read by the patches each physics step.
+		public static bool SneakingNow, ClimbingNow, InWaterNow, InLavaNow;
+		public static bool FlyingNow, GlidingNow, SprintingNow; // Creative flight, elytra
+		public static bool RocketNow; // a firework rocket pulls the glide
+		int _impulseSeq = int.MinValue;
+		public static float FeltGravity = 12f; // m/s², for the elytra
+		public static float FeetOffset = 1f; // the body's origin above its feet, metres
+		public static Vector3 GroundVelocity; // of what we stand on (or last stood on), world space
+		float _savedAcceleration;
+		static readonly AccessTools.FieldRef<PlayerCharacterController, float> AccelerationRef = AccessTools.FieldRefAccess<PlayerCharacterController, float>("_acceleration");
+		// Stairs are 45-degree ramps for the body: it must count as ground there.
+		const int RampAngle = 50; // degrees; the game keeps these two limits as whole degrees
+		int _savedGroundAngle, _savedSlopesAngle;
+		public bool DrivenAcked; // Minecraft said it follows us (an old jar never does)
+		public float EnteredAt;
+		// Metres the jump should peak at: Minecraft's 1.25 blocks and a bit, since the body is a capsule
+		// with a round bottom. The speed for it comes from gravity, but on the way up the body loses more
+		// than gravity alone takes (peaks came out 0.8-1.0 m for a 1.3 m speed), so a gain, learned from
+		// how high each jump really got, makes up the difference.
+		const float JumpHeight = 1.4f;
+		static float _jumpGain = 1.15f;
+		float _pendingYaw;
+		bool _onGround;
+		uint _landSeq;
+		float _landFall, _fallSpeed;
+		long _posQpc; // when X/Y/Z were true, for Minecraft's ticks (see Proto.SsHostQpc)
+		Vector3 _mcVel; // the body's speed against the tile, blocks per second on the tile's axes
+		// The gravity the body really feels in the air (m/s²), measured from its own fall: the planet's
+		// field alone came out short (the jump peaked near 1 m) and the force detector drifted.
+		float _feltGravity, _lastVertical, _lastVerticalTime;
+		int _feltSamples;
+		float _savedRun, _savedWalk, _savedStrafe, _savedMinJump, _savedMaxJump;
+		static readonly AccessTools.FieldRef<PlayerCharacterController, float> RunSpeedRef = AccessTools.FieldRefAccess<PlayerCharacterController, float>("_runSpeed");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, float> WalkSpeedRef = AccessTools.FieldRefAccess<PlayerCharacterController, float>("_walkSpeed");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, float> StrafeSpeedRef = AccessTools.FieldRefAccess<PlayerCharacterController, float>("_strafeSpeed");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, float> MinJumpRef = AccessTools.FieldRefAccess<PlayerCharacterController, float>("_minJumpSpeed");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, float> MaxJumpRef = AccessTools.FieldRefAccess<PlayerCharacterController, float>("_maxJumpSpeed");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, Collider> BodyColliderRef = AccessTools.FieldRefAccess<PlayerCharacterController, Collider>("_bodyCollider");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, int> GroundAngleRef = AccessTools.FieldRefAccess<PlayerCharacterController, int>("_maxAngleToBeGrounded");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, int> SlopesAngleRef = AccessTools.FieldRefAccess<PlayerCharacterController, int>("_maxAngleBetweenSlopes");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, Collider> AntiSinkingRef = AccessTools.FieldRefAccess<PlayerCharacterController, Collider>("_antiSinkingCollider");
+		static readonly AccessTools.FieldRef<PlayerCharacterController, ForceDetector> ForceDetectorRef = AccessTools.FieldRefAccess<PlayerCharacterController, ForceDetector>("_forceDetector");
 		public Anchor Anchor { get; private set; }
 		public uint TeleportSeq { get; private set; }
 		bool _reanchor;
@@ -121,34 +179,86 @@ namespace OWCraft.Player
 			_lookPitch = lookCam != null ? -Mathf.Asin(Mathf.Clamp(Vector3.Dot(lookCam.transform.forward, player.up), -1f, 1f)) * Mathf.Rad2Deg : 0f;
 			if (lookCam != null) McLookFrom(lookCam.transform.forward);
 
-			// Pinned the way the game's own seats do it (PlayerAttachPoint): kinematic and parented to the
-			// planet. Not OWRigidbody.Suspend, which also turns off the player's detectors, so the game
-			// thinks you're in a vacuum and you suffocate.
-			body.MakeKinematic();
-			body.transform.parent = planet.Body.transform;
-			PinnedTo = planet.Body;
-			var ground = Traverse.Create(controller).Field("_groundCollider").GetValue<Collider>();
-			controller.LockMovement(true);
-			controller.SetColliderActivation(false);
-			_groundCollider = ground;
-			StandOn(controller, planet.Body);
-			// Every other solid collider too: the planet is a moving rigidbody, so a pinned player body
-			// brushing its ground counts as an impact, and hard enough ones kill. Triggers (oxygen, hazard
-			// and fluid detectors) stay on.
-			_solidColliders.Clear();
-			foreach (var c in body.GetComponentsInChildren<Collider>())
+			Driven = UseOwPhysics;
+			FeetOffset = _feetOffset;
+			_feltGravity = 0f;
+			_feltSamples = 0;
+			Instance2 = this;
+			_lastVertical = float.NaN;
+			SneakingNow = ClimbingNow = InWaterNow = InLavaNow = FlyingNow = GlidingNow = SprintingNow = RocketNow = false;
+			_impulseSeq = int.MinValue;
+			DrivenNow = Driven;
+			DrivenAcked = false;
+			EnteredAt = Time.unscaledTime;
+			_pendingYaw = 0f;
+			if (Driven)
 			{
-				if (c.isTrigger || !c.enabled) continue;
-				c.enabled = false;
-				_solidColliders.Add(c);
+				// The body stays as the game has it: dynamic, colliding, moved by its own controller.
+				// Only its speeds and jump become Minecraft's.
+				PinnedTo = null;
+				_savedRun = RunSpeedRef(controller);
+				_savedWalk = WalkSpeedRef(controller);
+				_savedStrafe = StrafeSpeedRef(controller);
+				_savedMinJump = MinJumpRef(controller);
+				_savedMaxJump = MaxJumpRef(controller);
+				_savedAcceleration = AccelerationRef(controller);
+				_savedGroundAngle = GroundAngleRef(controller);
+				_savedSlopesAngle = SlopesAngleRef(controller);
+				GroundAngleRef(controller) = System.Math.Max(_savedGroundAngle, RampAngle);
+				SlopesAngleRef(controller) = System.Math.Max(_savedSlopesAngle, RampAngle);
+				OWCraft.Log($"ground slope limit {_savedGroundAngle} -> {GroundAngleRef(controller)} degrees, between slopes {_savedSlopesAngle} -> {SlopesAngleRef(controller)}");
+				_capsule = BodyColliderRef(controller) as CapsuleCollider;
+				_sinkSphere = AntiSinkingRef(controller) as SphereCollider;
+				if (_capsule != null)
+				{
+					float scale = Mathf.Max(_capsule.transform.lossyScale.x, 0.01f);
+					_savedRadius = _capsule.radius;
+					_capsule.radius = Mathf.Min(_savedRadius, SteveHalfWidth / scale);
+					BodyRadius = _capsule.radius * scale;
+					string sink = "none";
+					if (_sinkSphere != null)
+					{
+						float s2 = Mathf.Max(_sinkSphere.transform.lossyScale.x, 0.01f);
+						_savedSinkRadius = _sinkSphere.radius;
+						sink = $"sphere radius {_savedSinkRadius * s2:F2} m at {_sinkSphere.center}, on {_sinkSphere.enabled}";
+						_sinkSphere.radius = Mathf.Min(_savedSinkRadius, SteveHalfWidth / s2);
+					}
+					OWCraft.Log($"grounding sphere follows Steve's width ({DrivenGroundCastPatch.Replaced} patched)");
+					OWCraft.Log($"Steve's width: capsule radius {_savedRadius * scale:F2} -> {BodyRadius:F2} m, height {_capsule.height * scale:F2} m; anti-sinking {sink}");
+				}
+				OWCraft.Log($"Outer Wilds physics for Steve: the game's speeds were run {_savedRun:F1}, walk {_savedWalk:F1}, strafe {_savedStrafe:F1}, jump {_savedMinJump:F1}-{_savedMaxJump:F1} m/s");
 			}
-			// We place the body every frame; physics interpolation would drag it back to the last
-			// physics step and make the motion stutter.
-			var rb = body.GetComponent<Rigidbody>();
-			if (rb != null)
+			else
 			{
-				_previousInterpolation = rb.interpolation;
-				rb.interpolation = RigidbodyInterpolation.None;
+				// Pinned the way the game's own seats do it (PlayerAttachPoint): kinematic and parented to the
+				// planet. Not OWRigidbody.Suspend, which also turns off the player's detectors, so the game
+				// thinks you're in a vacuum and you suffocate.
+				body.MakeKinematic();
+				body.transform.parent = planet.Body.transform;
+				PinnedTo = planet.Body;
+				var ground = Traverse.Create(controller).Field("_groundCollider").GetValue<Collider>();
+				controller.LockMovement(true);
+				controller.SetColliderActivation(false);
+				_groundCollider = ground;
+				StandOn(controller, planet.Body);
+				// Every other solid collider too: the planet is a moving rigidbody, so a pinned player body
+				// brushing its ground counts as an impact, and hard enough ones kill. Triggers (oxygen, hazard
+				// and fluid detectors) stay on.
+				_solidColliders.Clear();
+				foreach (var c in body.GetComponentsInChildren<Collider>())
+				{
+					if (c.isTrigger || !c.enabled) continue;
+					c.enabled = false;
+					_solidColliders.Add(c);
+				}
+				// We place the body every frame; physics interpolation would drag it back to the last
+				// physics step and make the motion stutter.
+				var rb = body.GetComponent<Rigidbody>();
+				if (rb != null)
+				{
+					_previousInterpolation = rb.interpolation;
+					rb.interpolation = RigidbodyInterpolation.None;
+				}
 			}
 			_previousInputMode = OWInput.GetInputMode();
 			OWInput.ChangeInputMode(InputMode.None);
@@ -195,7 +305,32 @@ namespace OWCraft.Player
 			_camT = null;
 			ThirdPerson = false;
 			SetInvincible(false);
-			if (body != null)
+			bool wasDriven = Driven;
+			Driven = false;
+			DrivenNow = false;
+			if (wasDriven && controller != null)
+			{
+				RunSpeedRef(controller) = _savedRun;
+				WalkSpeedRef(controller) = _savedWalk;
+				StrafeSpeedRef(controller) = _savedStrafe;
+				MinJumpRef(controller) = _savedMinJump;
+				MaxJumpRef(controller) = _savedMaxJump;
+				AccelerationRef(controller) = _savedAcceleration;
+				SneakingNow = ClimbingNow = InWaterNow = InLavaNow = FlyingNow = GlidingNow = SprintingNow = RocketNow = false;
+				GroundAngleRef(controller) = _savedGroundAngle;
+				SlopesAngleRef(controller) = _savedSlopesAngle;
+			}
+			if (_capsule != null)
+			{
+				_capsule.radius = _savedRadius;
+				_capsule = null;
+			}
+			if (_sinkSphere != null)
+			{
+				_sinkSphere.radius = _savedSinkRadius;
+				_sinkSphere = null;
+			}
+			if (body != null && !wasDriven)
 			{
 				var rb = body.GetComponent<Rigidbody>();
 				if (rb != null) rb.interpolation = _previousInterpolation;
@@ -296,7 +431,7 @@ namespace OWCraft.Player
 			_reanchor = reanchor;
 			CollisionEpoch++;
 			streamer.Reset(CollisionEpoch);
-			_waitingForTeleport = true;
+			_waitingForTeleport = !Driven; // driven: the body's own physics holds it, nothing to wait for
 			_tickCount = 0; // don't glide between the old and new place
 			var body = Locator.GetPlayerBody();
 			_holdLocal = body.transform.localPosition;
@@ -323,6 +458,13 @@ namespace OWCraft.Player
 		{
 			float s = sensitivity * 0.6f + 0.2f;
 			float f = s * s * s * 8f * 0.15f;
+			if (Driven)
+			{
+				// The body turns (Update applies it); the controller adds the ground's own spin.
+				_pendingYaw += mouseDelta.x * f;
+				_lookPitch = Mathf.Clamp(_lookPitch + mouseDelta.y * f, -90f, 90f);
+				return;
+			}
 			_heading = _heading * Quaternion.Euler(0f, mouseDelta.x * f, 0f);
 			_lookPitch = Mathf.Clamp(_lookPitch + mouseDelta.y * f, -90f, 90f);
 		}
@@ -334,6 +476,7 @@ namespace OWCraft.Player
 			if (body == null || Anchor?.Body == null || PlayerState.IsDead()) return false;
 			ScreenOpen = haveState && mc.Has(Proto.McScreenOpen);
 			if (haveState) SetInvincible(mc.Has(Proto.McInvulnerable));
+			if (Driven) return UpdateDriven(mc, haveState, streamer);
 			Transform player = body.transform;
 
 			if (_waitingForTeleport)
@@ -478,6 +621,218 @@ namespace OWCraft.Player
 			return true;
 		}
 
+		// Diagnostics for jumps: what the game used, how high it got (a few per stats line).
+		static int _jumpLogs;
+		static float _jumpStartY = float.NaN, _jumpPeak;
+		public static void ResetDiagnostics() { _jumpLogs = 0; }
+
+		public static void NoteJump(PlayerCharacterController controller)
+		{
+			if (_jumpLogs++ >= 3) return;
+			var forces = ForceDetectorRef(controller);
+			float g = forces != null ? forces.GetForceAcceleration().magnitude : 0f;
+			OWCraft.Log($"jump: felt gravity {(Instance2 != null && Instance2._feltSamples >= 15 ? Instance2._feltGravity.ToString("F1") : "not measured yet")}, forces here {g:F1} m/s², jump speed {MaxJumpRef(controller):F1} m/s (min {MinJumpRef(controller):F1}), should rise {(g > 0.1f ? MaxJumpRef(controller) * MaxJumpRef(controller) / (2f * g) : 0f):F2} m");
+			_jumpStartY = 0f;
+			_jumpPeak = 0f;
+		}
+
+
+		/// <summary>
+		/// Gravity here, m/s²: the planet's own gravity field, as the jump needs it. The controller's force
+		/// detector adds every force acting (water pushing up, currents), and in the game's water it read
+		/// half of it: the jump came out half as high and stayed so. Without a gravity field (an island,
+		/// space), what the detector says.
+		/// </summary>
+		float Gravity(PlayerCharacterController controller, Vector3 at)
+		{
+			var planet = Anchor?.Body;
+			var astro = planet != null ? planet.GetComponent<AstroObject>() : null;
+			var field = astro != null ? astro.GetGravityVolume() : planet != null ? planet.GetAttachedGravityVolume() : null;
+			if (field != null)
+			{
+				float g = field.CalculateForceAccelerationAtPoint(at).magnitude;
+				if (g > 0.5f) return g;
+			}
+			var forces = ForceDetectorRef(controller);
+			return forces != null ? forces.GetForceAcceleration().magnitude : 0f;
+		}
+
+		/// <summary>
+		/// How far a Minecraft player falls before hitting the ground at this speed (m/s), with Minecraft's
+		/// own gravity and drag per tick: move, then speed = (speed + 0.08) * 0.98.
+		/// </summary>
+		static float McFallFor(float metresPerSecond)
+		{
+			double target = metresPerSecond / 20.0, speed = 0.0, fallen = 0.0;
+			for (int tick = 0; tick < 400; tick++)
+			{
+				if (speed >= target) return (float)fallen;
+				fallen += speed;
+				speed = (speed + 0.08) * 0.98;
+			}
+			return 256f; // faster than Minecraft's terminal speed
+		}
+
+		/// <summary>
+		/// "Outer Wilds physics": the body moves itself (its controller, fed WASD and space by the input
+		/// patches, at Minecraft's speeds); we turn it with the mouse, put the camera at Minecraft's eye
+		/// height, and tell Minecraft where the feet are.
+		/// </summary>
+		bool UpdateDriven(in SharedLink.GuestState mc, bool haveState, CollisionStreamer streamer)
+		{
+			var body = Locator.GetPlayerBody();
+			var controller = Locator.GetPlayerController();
+			if (controller == null) return false;
+			Transform player = body.transform;
+			if (haveState && mc.Has(Proto.McHostDriven)) DrivenAcked = true;
+			if (haveState && mc.Has(Proto.McServerBehind)) OWCraft.LogOnce("server-behind", "Minecraft's server had the player somewhere else (more than 2 blocks away); the jar moves it back (see Minecraft's log)");
+			if (_pendingYaw != 0f)
+			{
+				player.rotation = Quaternion.AngleAxis(_pendingYaw, player.up) * player.rotation;
+				_pendingYaw = 0f;
+			}
+
+			// Minecraft's context: sneaking, climbing, water, lava, and its own speed, friction and jump.
+			SneakingNow = haveState && mc.Has(Proto.McSneaking);
+			ClimbingNow = haveState && mc.Has(Proto.McClimbing);
+			InWaterNow = haveState && mc.Has(Proto.McInWater);
+			InLavaNow = haveState && mc.Has(Proto.McInLava);
+			FlyingNow = haveState && mc.Has(Proto.McFlying);
+			GlidingNow = haveState && mc.Has(Proto.McFallFlying);
+			bool rocket = GlidingNow && mc.Has(Proto.McRocketBoost);
+			if (rocket && !RocketNow) OWCraft.Log("firework rocket: pulling the glide");
+			RocketNow = rocket;
+			SprintingNow = haveState && mc.Has(Proto.McSprinting);
+			// A push from Minecraft (knockback, an explosion, a firework): the same change of speed here.
+			if (haveState && mc.ImpulseSeq != _impulseSeq)
+			{
+				if (_impulseSeq != int.MinValue)
+				{
+					Vector3 push = Anchor.WorldRotation * new Vector3(mc.ImpulseX, mc.ImpulseY, -mc.ImpulseZ) * 20f; // blocks/tick -> m/s, Z flipped
+					if (push.sqrMagnitude < 60f * 60f)
+					{
+						body.AddVelocityChange(push);
+						OWCraft.Log($"push from Minecraft: {push.magnitude:F1} m/s ({Vector3.Dot(push, player.up):F1} up)");
+					}
+				}
+				_impulseSeq = mc.ImpulseSeq;
+			}
+			// Speed: walking (the setting) x Minecraft's factor (sprint, Speed, Slowness, soul sand), or
+			// the plain sprint 130% with an older jar; sneaking 30%; slower in water and lava.
+			float walk = WalkSpeed > 0f ? WalkSpeed : 4.317f;
+			float factor = haveState && mc.MoveFactor > 0f ? mc.MoveFactor : (haveState && mc.Has(Proto.McSprinting) ? 1.3f : 1f);
+			float speed = walk * Mathf.Clamp(factor, 0.05f, 5f);
+			if (SneakingNow) speed = walk * 0.3f;
+			if (InWaterNow) speed *= 0.5f;
+			if (InLavaNow) speed *= 0.25f;
+			RunSpeedRef(controller) = speed;
+			WalkSpeedRef(controller) = speed;
+			StrafeSpeedRef(controller) = speed;
+			// Friction: Minecraft speeds up and slows down by (0.6 / friction)^3; on ice that's a quarter, a slide.
+			float friction = haveState && mc.Friction > 0.1f ? mc.Friction : 0.6f;
+			AccelerationRef(controller) = _savedAcceleration * Mathf.Clamp(Mathf.Pow(0.6f / friction, 3f), 0.05f, 1f);
+			// Minecraft's jump is a height (1.25 blocks), not a speed: the same step up on every planet.
+			// Jump Boost and the like scale the jump speed, so the height goes with its square.
+			float jumpFactor = haveState && mc.JumpFactor > 0f ? Mathf.Clamp(mc.JumpFactor, 0.1f, 5f) : 1f;
+			float g = Gravity(controller, player.position);
+			if (_feltSamples >= 15) g = _feltGravity;
+			if (g > 0.5f) FeltGravity = g;
+			if (g > 0.5f)
+			{
+				float jump = Mathf.Sqrt(2f * g * JumpHeight) * jumpFactor * _jumpGain;
+				MinJumpRef(controller) = jump;
+				MaxJumpRef(controller) = jump;
+			}
+			var groundBody = controller.GetLastGroundBody() ?? Anchor.Body;
+			GroundVelocity = groundBody != null ? groundBody.GetPointVelocity(player.position) : Vector3.zero;
+
+			bool wasOnGround = _onGround;
+			_onGround = controller.IsGrounded();
+			_inAir = !_onGround;
+			Vector3 up = player.up;
+			if (!_onGround)
+			{
+				// Falling speed against the ground we left (planets spin and orbit, ships move).
+				var ground = controller.GetLastGroundBody() ?? Anchor.Body;
+				Vector3 v = body.GetVelocity() - (ground != null ? ground.GetPointVelocity(player.position) : Vector3.zero);
+				float vertical = Vector3.Dot(v, up);
+				// The velocity only changes on physics steps: measure between changes, over the time they took.
+				if (float.IsNaN(_lastVertical) || vertical != _lastVertical)
+				{
+					float dt = Time.time - _lastVerticalTime;
+					if (!float.IsNaN(_lastVertical) && dt > 0.005f && dt < 0.1f && !InWaterNow && !InLavaNow && !ClimbingNow && !FlyingNow && !GlidingNow)
+					{
+						float a = (_lastVertical - vertical) / dt; // downward acceleration
+						if (a > 1f && a < 60f)
+						{
+							_feltGravity = _feltSamples == 0 ? a : Mathf.Lerp(_feltGravity, a, 0.05f);
+							_feltSamples++;
+						}
+					}
+					_lastVertical = vertical;
+					_lastVerticalTime = Time.time;
+				}
+				_fallSpeed = Mathf.Max(0f, -Vector3.Dot(v, up));
+				if (InWaterNow || ClimbingNow) _fallSpeed = 0f; // water and ladders break a fall, as in Minecraft
+			}
+			else if (!wasOnGround)
+			{
+				_lastVertical = float.NaN;
+				// Landed: Minecraft hurts by this, so a slow fall in weak gravity is a soft landing.
+				_landSeq++;
+				_landFall = McFallFor(_fallSpeed);
+				if (_landFall > 3f) OWCraft.Log($"landed at {_fallSpeed:F1} m/s: like a {_landFall:F1}-block fall in Minecraft");
+				_fallSpeed = 0f;
+			}
+			Vector3 feet = player.position - up * _feetOffset;
+			Anchor.WorldToMc(feet, out X, out Y, out Z);
+			// Minecraft samples this at its own 20 ticks a second, between our frames: each tick saw two
+			// or three frames of walking, and its hand and view bobbing followed those uneven steps. With
+			// the moment and the speed it can work out where the body is at its tick.
+			QueryPerformanceCounter(out long nowQpc);
+			if (_qpcFrequency == 0) QueryPerformanceFrequency(out _qpcFrequency);
+			var rbody = body.GetComponent<Rigidbody>();
+			// Without interpolation the transform is the last physics step's, not this frame's.
+			double stepAge = rbody != null && rbody.interpolation == RigidbodyInterpolation.None ? Math.Max(0.0, Time.time - Time.fixedTime) : 0.0;
+			_posQpc = nowQpc - (long)(stepAge * _qpcFrequency);
+			Vector3 relVel = body.GetVelocity() - (Anchor.Body != null ? Anchor.Body.GetPointVelocity(player.position) : Vector3.zero);
+			Vector3 tileVel = Quaternion.Inverse(Anchor.WorldRotation) * relVel;
+			_mcVel = new Vector3(tileVel.x, tileVel.y, -tileVel.z);
+			if (!float.IsNaN(_jumpStartY))
+			{
+				// How high the jump really got, in Minecraft blocks (Y is up on the tile).
+				if (_jumpStartY == 0f) _jumpStartY = (float)Y;
+				_jumpPeak = Mathf.Max(_jumpPeak, (float)Y - _jumpStartY);
+				if (_onGround && wasOnGround && _jumpPeak > 0.01f)
+				{
+					// Learn: a clean jump (not cut short by a ceiling, not a hop in place) nudges the gain.
+					if (_jumpPeak > 0.4f && _jumpPeak < 3f && !InWaterNow && !ClimbingNow)
+						_jumpGain = Mathf.Clamp(_jumpGain * Mathf.Clamp(Mathf.Sqrt(JumpHeight / _jumpPeak), 0.93f, 1.07f), 0.8f, 1.6f);
+					OWCraft.Log($"jump peaked at {_jumpPeak:F2} m (aim {JumpHeight:F2}, gain now {_jumpGain:F2})");
+					_jumpStartY = float.NaN;
+				}
+			}
+
+			var camController = Locator.GetPlayerCameraController();
+			if (camController != null) camController.SetDegreesY(Mathf.Clamp(-_lookPitch, -80f, 80f));
+			var cam = Locator.GetPlayerCamera();
+			if (cam != null)
+			{
+				if (cam.transform == _camT) _camT.localPosition = _camLocal;
+				cam.transform.localRotation = Quaternion.AngleAxis(_lookPitch, Vector3.right);
+				// Minecraft's eye height (sneaking lowers it), on the camera only.
+				_eye = haveState && mc.EyeHeight > 0f ? mc.EyeHeight : 1.62f;
+				Vector3 eyeWorld = feet + up * _eye;
+				if (cam.transform == _camT) _camT.position += up * Vector3.Dot(eyeWorld - cam.transform.position, up);
+				McLookFrom(cam.transform.forward);
+				ThirdPerson = haveState && mc.CameraMode != 0 && cam.transform == _camT;
+				if (ThirdPerson) PlaceThirdPerson(cam.transform, eyeWorld, mc.CameraMode == 2, mc.CameraDistance > 0f ? mc.CameraDistance : 4f);
+			}
+
+			MaybeReanchor(feet, streamer);
+			return true;
+		}
+
 		/// <summary>
 		/// Minecraft's F5 views: behind the eye looking on, or in front looking back. Minecraft already
 		/// shortened the distance against its blocks; the planet's own geometry can be closer.
@@ -524,7 +879,7 @@ namespace OWCraft.Player
 
 			var old = Anchor;
 			Anchor = next;
-			if (next.Body != old.Body)
+			if (next.Body != old.Body && !Driven)
 			{
 				// Pinned to the new body now; the heading is kept in its local space.
 				_heading = Quaternion.Inverse(next.BodyTransform.rotation) * old.BodyTransform.rotation * _heading;
@@ -587,6 +942,20 @@ namespace OWCraft.Player
 			s.TeleportSeq = TeleportSeq;
 			// Minecraft keeps an airborne player's speed and flight across a tile change.
 			if (_reanchor) s.Flags |= Proto.HostReanchor;
+			if (Driven)
+			{
+				s.Flags |= Proto.HostDrives;
+				if (_onGround) s.Flags |= Proto.HostOnGround;
+				s.LandSeq = _landSeq;
+				s.LandFall = _landFall;
+				if (_mcVel.sqrMagnitude < 80f * 80f)
+				{
+					s.HostQpc = _posQpc;
+					s.VelX = _mcVel.x;
+					s.VelY = _mcVel.y;
+					s.VelZ = _mcVel.z;
+				}
+			}
 			s.ShiftRot = _shiftRot;
 			s.CollisionEpoch = CollisionEpoch;
 		}

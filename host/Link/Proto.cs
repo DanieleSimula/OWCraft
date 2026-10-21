@@ -45,9 +45,18 @@ namespace OWCraft.Link
 		// OWCraft: the last tile change as a 3x3 rotation (row-major, old tile's Minecraft axes -> new tile's),
 		// so Minecraft can carry the mobs around the player along with it.
 		public const long SsShiftRot = 0x40;
+		// Fork, with HostDrives: bumped on every landing, and the Minecraft fall (blocks) that lands that fast.
+		public const long SsLandSeq = 0x64, SsLandFall = 0x68;
+		// Fork, with HostDrives: when X/Y/Z were true (QueryPerformanceCounter) and the body's speed then
+		// (blocks per second, tile axes), so Minecraft can carry the position on to its own tick's moment.
+		public const long SsHostQpc = 0x70, SsVelX = 0x78, SsVelY = 0x7C, SsVelZ = 0x80;
 		public const uint HostInGame = 1, HostMenuOpen = 1 << 1, HostLoading = 1 << 2;
 		// OWCraft's own: the current teleport is a tile change (same spot, new Minecraft coordinates).
 		public const uint HostReanchor = 1 << 3;
+		// Fork: Steve moves with the Outer Wilds body's physics; Minecraft follows X/Y/Z every tick.
+		public const uint HostDrives = 1 << 4;
+		// Fork: with HostDrives, the Outer Wilds body is standing on the ground.
+		public const uint HostOnGround = 1 << 5;
 
 		// MC -> host state (seqlock)
 		public const long MsSeq = 0x00, MsFlags = 0x04, MsX = 0x08, MsY = 0x10, MsZ = 0x18, MsYaw = 0x20, MsPitch = 0x24;
@@ -57,6 +66,15 @@ namespace OWCraft.Link
 		public const uint McInWorld = 1, McScreenOpen = 1 << 1, McOnGround = 1 << 2, McSneaking = 1 << 3;
 		public const uint McSprinting = 1 << 4, McDead = 1 << 5, McSwimming = 1 << 6, McFlying = 1 << 7;
 		public const uint McInvulnerable = 1 << 8; // OWCraft: Creative or Spectator
+		public const uint McHostDriven = 1 << 9; // fork: Minecraft is following our position (HostDrives understood)
+		public const uint McClimbing = 1 << 10, McInWater = 1 << 11, McInLava = 1 << 12; // fork: ladder/vine, water, lava
+		public const uint McServerBehind = 1 << 13; // fork: Minecraft's server had the player elsewhere (it corrects it)
+		// fork, with HostDrives: how Minecraft would move the player (see the guest's movementContext)
+		public const long MsMoveFactor = 0xC8, MsFriction = 0xCC, MsJumpFactor = 0xD0;
+		// fork: a push from Minecraft (knockback, explosion, firework), blocks per tick, seq bumped each
+		public const long MsImpulseSeq = 0xD4, MsImpulseX = 0xD8, MsImpulseY = 0xDC, MsImpulseZ = 0xE0;
+		public const uint McFallFlying = 1 << 14; // fork: gliding with an elytra
+		public const uint McRocketBoost = 1 << 15; // fork: a firework rocket is pulling the gliding player this tick
 
 		// overlay triple buffer
 		public const long OcState = 0x00, OcFramesPublished = 0x08;
@@ -92,6 +110,7 @@ namespace OWCraft.Link
 		public const long RrDataBytes = RenderRingBytes - RrData;
 		public const uint RenPad = 0, RenAtlas = 1, RenSection = 2, RenClearAll = 3, RenTexture = 4, RenAvatar = 5, RenScene = 6;
 		public const uint RenAtlasRegion = 7, RenLights = 8, RenRagdoll = 9, RenSolids = 10, RenDug = 11;
+		public const uint RenShapes = 12; // fork: a section's collision boxes
 		public const int RenVertexBytes = 32;
 	}
 }

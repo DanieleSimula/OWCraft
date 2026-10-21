@@ -33,9 +33,9 @@ You need Windows, Outer Wilds (Steam) and Minecraft Java Edition.
    Manager: the two can't be loaded together.
 3. **Minecraft:** install [Fabric Loader](https://fabricmc.net/use/installer/) 0.19.5 or newer for
    Minecraft **26.3**. Put two files in your `.minecraft\mods` folder:
-   - `skycraft-<version>+owcraft.<n>.jar` from Yaekai's
-     [Releases](https://github.com/Yaekai/OWCraft/releases) (this fork doesn't change the Minecraft
-     side, so the latest jar there works);
+   - `skycraft-<version>+owcraft.<n>.ds<m>.jar` from this fork's
+     [Releases](https://github.com/DanieleSimula/OWCraft/releases), or built from `guest/fabric`
+     (see *Build from source*). Yaekai's jar still works with the *Outer Wilds physics* setting off;
    - [Fabric API](https://modrinth.com/mod/fabric-api) for 26.3.
 4. Start Minecraft with the Fabric profile in the normal launcher.
 5. Start Outer Wilds from the Mod Manager.
@@ -67,6 +67,7 @@ Settings (Mod Manager):
 |---|---|---|
 | Toggle key | F6 | Enter and leave Minecraft mode |
 | Start as Steve | on | Start every loop in Minecraft mode |
+| Outer Wilds physics | off | Experimental: Steve moves with the Outer Wilds body (its gravity and collisions: ship, elevators, islands); Minecraft follows. Needs the Minecraft jar built from this fork's patch |
 | Minecraft menu key | O | Open Minecraft's pause menu |
 | Minecraft mode FPS cap | 60 | Outer Wilds frame cap while in Minecraft mode |
 | Minecraft walk speed | 6.0 | Walking speed in m/s (vanilla Minecraft is 4.3) |
@@ -83,7 +84,9 @@ If Outer Wilds isn't in the default Steam folder, add `-p:GameDir="D:\Games\Oute
 When the Mod Manager is installed, the build copies `OWCraft.dll`, `manifest.json` and
 `default-config.json` into `%AppData%\OuterWildsModManager\OWML\Mods\DanieleSimula.OWCraft`.
 
-**Minecraft side:** SkyCraft's Fabric mod plus `guest/skycraft-owcraft.patch`. The patch:
+**Minecraft side:** `guest/fabric`, SkyCraft's Fabric mod (commit
+`bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32`, MIT, see `guest/fabric/LICENSE-SkyCraft`) with
+OWCraft's changes already applied. You need a JDK 25. On top of SkyCraft it:
 - skips presenting Minecraft's own hidden window while linked (this took Minecraft from 25 to 60 fps);
 - reads the overlay back at once, so inventory screens keep up with the mouse;
 - sets OWCraft's defaults: the `Local\OWCraft_v1` link, no "Skyrim destruction" (Outer Wilds can't
@@ -93,21 +96,18 @@ When the Mod Manager is installed, the build copies `OWCraft.dll`, `manifest.jso
 - lets mobs path over the planet surface, and holds mobs and items still where the planet's ground
   hasn't streamed in yet (instead of letting them fall into the void);
 - sends arrows, tridents and dropped items through the scene so Outer Wilds draws them;
-- adds a frame-time log.
+- adds a frame-time log;
+- (this fork) follows the Outer Wilds body's position when the *Outer Wilds physics* setting is on.
 
 ```bash
-git clone https://github.com/chasmlol/SkyCraft.git
-cd SkyCraft
-git checkout bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32
-git apply path/to/OWCraft/guest/skycraft-owcraft.patch
-cd fabric
-./gradlew build       # the jar lands in build/libs
+cd guest/fabric
+./gradlew build       # the jar lands in build/libs (gradlew.bat on Windows)
 ./gradlew runClient   # or run it straight from source
 ```
 
 ## Known limitations
 - Translucent blocks (glass, water, ice) are drawn opaque.
-- Outer Wilds' own player doesn't collide with placed blocks yet. Only the Minecraft player does.
+- Outer Wilds' own player stands on Minecraft's blocks and bumps into them, but can't open doors or trapdoors yet.
 - Flying the ship as Steve isn't supported yet: piloting switches to the Outer Wilds character.
   Planned for 0.3.
 - The Minecraft world doesn't follow Outer Wilds' day/night.
@@ -117,7 +117,7 @@ cd fabric
 ## Repository layout
 - `host/`: the OWML mod (C#). `Link/` holds the shared-memory protocol, `World/` the planet tiles,
   collision and rendering, `Player/` the movement, input and commands, `UI/` the overlay.
-- `guest/`: the patch to SkyCraft's Fabric mod.
+- `guest/fabric`: the Minecraft side, SkyCraft's Fabric mod with OWCraft's changes.
 - `tests/VoxelTest`: a unit test for the collision voxelizer.
 - `tools/check-logs.py`: reads both games' logs after a play test and lists known problems.
 - `docs/DESIGN.md`: the architecture.

@@ -3,6 +3,7 @@
   "settings": {
     "toggleKey": "F6",
     "startAsSteve": true,
+    "outerWildsPhysics": false,
     "minecraftMenuKey": "O",
     "verboseLogging": false,
     "minecraftModeFpsCap": 60,

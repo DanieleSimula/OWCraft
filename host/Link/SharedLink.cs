@@ -119,6 +119,10 @@ namespace OWCraft.Link
 			public int ViewportW, ViewportH;
 			public float GameHour;
 			public Matrix3 ShiftRot;
+			public uint LandSeq; // fork: see Proto.SsLandSeq
+			public float LandFall;
+			public long HostQpc; // fork: see Proto.SsHostQpc
+			public float VelX, VelY, VelZ;
 		}
 
 		/// <summary>A row-major 3x3 matrix (identity unless set).</summary>
@@ -148,6 +152,12 @@ namespace OWCraft.Link
 			var r = s.ShiftRot;
 			float[] m = { r.M00, r.M01, r.M02, r.M10, r.M11, r.M12, r.M20, r.M21, r.M22 };
 			for (int i = 0; i < 9; i++) F32(b + Proto.SsShiftRot + i * 4) = m[i];
+			I32(b + Proto.SsLandSeq) = (int)s.LandSeq;
+			F32(b + Proto.SsLandFall) = s.LandFall;
+			I64(b + Proto.SsHostQpc) = s.HostQpc;
+			F32(b + Proto.SsVelX) = s.VelX;
+			F32(b + Proto.SsVelY) = s.VelY;
+			F32(b + Proto.SsVelZ) = s.VelZ;
 			Thread.MemoryBarrier();
 			Volatile.Write(ref I32(b + Proto.SsSeq), _hostSeq);
 		}
@@ -171,6 +181,9 @@ namespace OWCraft.Link
 			public long TickQpc;
 			public double PrevX, PrevY, PrevZ, CurX, CurY, CurZ;
 			public float TickEyeO, TickEye, TickMs;
+			public float MoveFactor, Friction, JumpFactor; // fork: 0 from an older jar
+			public int ImpulseSeq;
+			public float ImpulseX, ImpulseY, ImpulseZ;
 
 			public bool Has(uint flag) => (Flags & flag) != 0;
 		}
@@ -200,6 +213,13 @@ namespace OWCraft.Link
 				s.EyeZ = F64(b + Proto.MsEyeZ);
 				s.CameraMode = I32(b + Proto.MsCameraMode);
 				s.CameraDistance = F32(b + Proto.MsCameraDistance);
+				s.MoveFactor = F32(b + Proto.MsMoveFactor);
+				s.Friction = F32(b + Proto.MsFriction);
+				s.JumpFactor = F32(b + Proto.MsJumpFactor);
+				s.ImpulseSeq = I32(b + Proto.MsImpulseSeq);
+				s.ImpulseX = F32(b + Proto.MsImpulseX);
+				s.ImpulseY = F32(b + Proto.MsImpulseY);
+				s.ImpulseZ = F32(b + Proto.MsImpulseZ);
 				s.TickQpc = I64(b + Proto.MsTickQpc);
 				s.PrevX = F64(b + Proto.MsPrevX);
 				s.PrevY = F64(b + Proto.MsPrevX + 8);

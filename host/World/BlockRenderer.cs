@@ -24,6 +24,7 @@ namespace OWCraft.World
 		readonly SceneRenderer _scene;
 		public SceneRenderer Scene => _scene;
 		readonly LightRenderer _lights = new LightRenderer();
+		readonly BlockColliders _colliders = new BlockColliders();
 
 		public Material SolidMaterial => _solid;
 		public Material TranslucentMaterial => _translucent;
@@ -172,6 +173,9 @@ namespace OWCraft.World
 						break;
 					case Proto.RenLights:
 						_lights.OnLights(p, bytes);
+						break;
+					case Proto.RenShapes:
+						_colliders.OnShapes(p, bytes);
 						break;
 					case Proto.RenAvatar:
 						_scene.OnAvatar(p, bytes);
@@ -369,6 +373,7 @@ namespace OWCraft.World
 				placed++;
 			}
 			_lights.Rebuild();
+			_colliders.Rebuild();
 			OWCraft.Log($"rebuilt {placed} of {_sections.Count} sections, {_lights.Count} lights");
 		}
 
@@ -392,6 +397,7 @@ namespace OWCraft.World
 		{
 			_scene.Clear();
 			_lights.Clear();
+			_colliders.Clear();
 			foreach (var section in _sections.Values) DestroySection(section);
 			_sections.Clear();
 		}

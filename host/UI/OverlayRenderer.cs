@@ -25,10 +25,13 @@ namespace OWCraft.UI
 			if (_tex == null || _tex.width != w || _tex.height != h)
 			{
 				if (_tex != null) UnityEngine.Object.Destroy(_tex);
+				// Minecraft draws its screens at this size; smaller than our screen, they get stretched (blocky).
+				OWCraft.Log($"overlay {w}x{h} from Minecraft, screen {Screen.width}x{Screen.height}{(w < Screen.width || h < Screen.height ? ": stretched, will look blocky" : "")}");
 				_tex = new Texture2D(w, h, TextureFormat.RGBA32, false, false)
 				{
 					name = "OWCraft overlay",
-					filterMode = FilterMode.Point,
+					// Pixel for pixel when it fits the screen; stretched, smoothed (uneven doubled rows read as grain).
+					filterMode = w == Screen.width && h == Screen.height ? FilterMode.Point : FilterMode.Bilinear,
 					wrapMode = TextureWrapMode.Clamp,
 				};
 			}

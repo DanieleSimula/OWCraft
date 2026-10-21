@@ -3,8 +3,8 @@
 ## SkyCraft (chasmlol/SkyCraft), MIT
 
 OWCraft speaks SkyCraft's shared-memory protocol (v11), so SkyCraft's Fabric mod is the Minecraft
-side. `guest/skycraft-owcraft.patch` is a diff against SkyCraft's Fabric mod: a few small changes to
-frame pacing and the overlay copy. Parts of this mod are ported from SkyCraft's SKSE plugin (C++ to
+side. `guest/fabric` is SkyCraft's Fabric mod (from the reference commit below) with OWCraft's
+changes applied; its license is in `guest/fabric/LICENSE-SkyCraft`. Parts of this mod are ported from SkyCraft's SKSE plugin (C++ to
 C#):
 
 - `host/Link/Proto.cs`: the byte layout of `protocol/skycraft_protocol.h`.

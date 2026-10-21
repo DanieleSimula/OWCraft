@@ -9,3 +9,8 @@ obj/
 OWML/
 *.jfr
 release/
+# Minecraft side (guest/fabric)
+guest/fabric/.gradle/
+guest/fabric/build/
+guest/fabric/run/
+guest/fabric/out/

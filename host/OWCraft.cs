@@ -59,6 +59,8 @@ namespace OWCraft
 		float _freeSince = -1f;
 		bool _returnAfterLoop; // the statue ends the loop: back to Steve after waking up
 		bool _startAsSteve = true; // setting: every loop starts in Minecraft mode
+		bool _oldJarWarned;
+		bool _physicsChanged;
 		float _returnUntil; // keep waiting this long for Minecraft or the ground before giving up
 		readonly GamePrompts _prompts = new GamePrompts();
 		bool _hintUsable; // false: a notice without the right click icon
@@ -87,6 +89,11 @@ namespace OWCraft
 			_fpsCap = config.GetSettingsValue<int>("minecraftModeFpsCap");
 			_walkSpeed = config.GetSettingsValue<float>("minecraftWalkSpeed");
 			_startAsSteve = config.GetSettingsValue<bool>("startAsSteve");
+			bool owPhysics = config.GetSettingsValue<bool>("outerWildsPhysics");
+			// Changed while playing as Steve: restart Minecraft mode with it (Tick does it, unpaused).
+			if (owPhysics != _driver.UseOwPhysics && _driver.Active) _physicsChanged = true;
+			_driver.UseOwPhysics = owPhysics;
+			PlayerDriver.WalkSpeed = _walkSpeed;
 			_sized = false; // apply a new speed
 			_input.ToggleKey = ParseKey(config.GetSettingsValue<string>("toggleKey"), Key.F6);
 			_input.OpenMenuKey = ParseKey(config.GetSettingsValue<string>("minecraftMenuKey"), Key.O);
@@ -211,6 +218,19 @@ namespace OWCraft
 			bool paused = OWTime.IsPaused() || OWInput.IsInputMode(InputMode.Menu);
 			var kb = Keyboard.current;
 			if (_inSolarSystem && !paused && kb != null && kb[_input.ToggleKey].wasPressedThisFrame) Toggle();
+			if (_physicsChanged && !paused)
+			{
+				_physicsChanged = false;
+				if (_driver.Active)
+				{
+					// Out and straight back in, the way an interaction returns to Steve (it waits for ground).
+					Log("Outer Wilds physics setting changed: restarting Minecraft mode");
+					ExitMode(keepModelHidden: true);
+					_returnToSteve = true;
+					_freeSince = -1f;
+					_returnUntil = Time.unscaledTime + 5f;
+				}
+			}
 			if (_returnToSteve && !_driver.Active && _inSolarSystem && !paused) TryReturnToSteve();
 			// An Outer Wilds object under the crosshair (ship seat, elevator, switch): its text is shown,
 			// and a right click uses it instead of going to Minecraft.
@@ -282,6 +302,13 @@ namespace OWCraft
 				_partClock.Restart();
 				bool keep = _driver.Update(mc, haveState, _collision);
 				EndPart(0);
+				if (keep && _driver.Driven && !_driver.DrivenAcked && !_oldJarWarned && Time.unscaledTime - _driver.EnteredAt > 5f)
+				{
+					// An older Minecraft jar ignores "follow us": Steve would stay where Minecraft put it.
+					_oldJarWarned = true;
+					Log("Outer Wilds physics is on, but Minecraft isn't following the body: its jar is older than this mod (needs +owcraft.5.ds1)");
+					Notify("Outer Wilds physics needs the updated Minecraft jar");
+				}
 				if (!keep || (_guestLostAt >= 0 && Time.unscaledTime - _guestLostAt > 5f))
 				{
 					Notify("Minecraft mode off");
@@ -324,6 +351,7 @@ namespace OWCraft
 					_nextStatsAt = Time.unscaledTime + 5f;
 					Log($"Minecraft feet ({_driver.X:F1}, {_driver.Y:F1}, {_driver.Z:F1}), {_driver.GroundGap()} above the game's ground; velocity corrected by up to {PlayerDriver.MaxVelocityCorrection:F0} m/s; {_blocks.LightCount} lights; worst tick age {PlayerDriver.TickAgeMs:F0} ms ({PlayerDriver.LateTickFrames} frames waiting on a late tick); " + _collision.TakeStats());
 					PlayerDriver.MaxVelocityCorrection = 0f;
+					PlayerDriver.ResetDiagnostics();
 					PlayerDriver.TickAgeMs = 0;
 					PlayerDriver.LateTickFrames = 0;
 					string rates = TakeGuestRates(mc, haveState); // before TakeFrameStats resets the frame count

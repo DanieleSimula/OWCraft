@@ -217,6 +217,7 @@ namespace OWCraft.World
 			{
 				var col = _hits[k];
 				if (col == null || !col.enabled || _ignored.Contains(col)) continue;
+				if (BlockColliders.IsOurs(col)) continue; // Minecraft's own blocks: it knows them already
 				// Only what's part of this planet: not the ship, the player, the probe, loose objects.
 				var owner = col.attachedRigidbody != null ? col.attachedRigidbody.GetComponent<OWRigidbody>() : null;
 				if (owner != anchor.Body) continue;
